@@ -1,0 +1,14 @@
+#!/bin/sh
+# repo-privacy-guard: scan every commit about to be pushed, one commit at a time.
+# git passes the remote name and URL as arguments and the refs on stdin.
+# Needs Python 3.11+. Blocks the push if Python can't be found (fail closed).
+dir=$(dirname "$0")
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1 &&
+     "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 </dev/null; then
+    exec "$py" "$dir/privacy_guard.py" push -- "$@"
+  fi
+done
+echo "privacy-guard: push blocked: Python 3.11 or newer was not found." >&2
+echo "Install it, or skip the guard once with: git push --no-verify" >&2
+exit 1

@@ -1,0 +1,85 @@
+# Visibility guard, "going public" mode (from repo-privacy-guard).
+#
+# For a repository that is public or about to be. It scans every commit and annotated tag
+# on every branch and tag with the same rules as the git hooks, so it also catches commits
+# made with `--no-verify` or on a machine without the hooks. On push and pull request it
+# fails on the blocking rules (secrets, emails, home-folder paths) and shows the rest as
+# warnings. To fail on warnings too (phone numbers, postcodes, IP addresses), run it by
+# hand from the Actions tab with "strict" ticked, or run
+# `python3 .githooks/privacy_guard.py history --strict` locally. Do one of those, and read
+# the result, before you change the repository to public.
+#
+# For pull requests it uses the scanner and rules from the base branch, so editing them in
+# a pull request doesn't change that pull request's result. If the pull request's own
+# config doesn't load with the base branch's scanner, the run fails, unless the pull
+# request also changes privacy_guard.py (an upgrade), when it only warns. This workflow
+# file itself still comes from the pull request, so also require review of changes to
+# .github/ and .githooks/ (for example with CODEOWNERS and a branch rule).
+#
+# The log shows commit ids, file names and rule names, never the matched text.
+# It needs .githooks/privacy_guard.py and .githooks/privacy-guard.toml in the repository,
+# and Python 3.11 or newer (ubuntu-latest has it).
+name: Visibility guard
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "Fail on warnings too (phone numbers, postcodes, IP addresses)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that Python 3.11 or newer is available
+        run: |
+          python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+            echo "::error::The privacy guard needs Python 3.11 or newer."
+            exit 1
+          }
+      - name: Check out every branch and tag with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: For pull requests, take the scanner and rules from the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          guard="$RUNNER_TEMP/guard"
+          mkdir -p "$guard"
+          if git cat-file -e "origin/$BASE_REF:.githooks/privacy_guard.py" 2>/dev/null; then
+            git show "origin/$BASE_REF:.githooks/privacy_guard.py" > "$guard/privacy_guard.py"
+            git show "origin/$BASE_REF:.githooks/privacy-guard.toml" > "$guard/privacy-guard.toml"
+          else
+            echo "::warning::The base branch has no privacy guard yet, so this pull request's own copy is used."
+            cp .githooks/privacy_guard.py .githooks/privacy-guard.toml "$guard/"
+          fi
+          if ! python3 "$guard/privacy_guard.py" check-config --config .githooks/privacy-guard.toml; then
+            if git diff --quiet "origin/$BASE_REF"...HEAD -- .githooks/privacy_guard.py; then
+              echo "::error::This pull request's privacy-guard.toml doesn't load with the base branch's scanner. Fix the config."
+              exit 1
+            fi
+            echo "::warning::This pull request's privacy-guard.toml doesn't load with the base branch's scanner. That is expected because the pull request also upgrades privacy_guard.py."
+          fi
+      - name: Scan the whole history for secrets and personal details
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          STRICT: ${{ inputs.strict }}
+        run: |
+          flags=
+          if [ "$STRICT" = "true" ]; then flags=--strict; fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 "$RUNNER_TEMP/guard/privacy_guard.py" history $flags
+          else
+            python3 .githooks/privacy_guard.py history $flags
+          fi

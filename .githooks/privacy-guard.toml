@@ -1,0 +1,523 @@
+# Rules for repo-privacy-guard.
+#
+# Patterns are Python regular expressions (https://docs.python.org/3/library/re.html),
+# written as TOML literal strings ('...' or '''...''') so backslashes stay as they are.
+# A pattern matches anywhere in the text unless you anchor it with ^ and $.
+#
+# Findings show the file, line and rule id, never the matched text.
+# To turn a rule off, delete it or comment it out. Unknown keys and broken patterns
+# are errors (the hook blocks), so a typo can't quietly switch a check off. So are
+# allowlist patterns so broad that they would match almost anything, such as '.'.
+#
+# The hooks read this file as it is staged (pre-commit and commit-msg) or committed
+# (pre-push), so stage or commit your edits for them to take effect.
+# Check your edits with:  python .githooks/privacy_guard.py check-config
+
+version = 1
+
+[settings]
+# Hide personal findings on one line with a comment containing this marker:
+#   privacy-guard:allow=<rule-id>[,<rule-id>]   hides only the named personal rules
+#   privacy-guard:allow                         hides every personal rule on the line
+# Markers never hide secrets (allow those below, in [allowlist], where they're reviewed),
+# and they have no effect in commit or tag messages. A marker written any other way
+# (spaces, capitals, quotes) does nothing, and a warning says so.
+# Set to "" to turn inline markers off.
+inline_allow_marker = "privacy-guard:allow"
+# Block commits whose author or committer email isn't in allowlist.commit_emails.
+check_commit_emails = true
+# Scan commit and tag messages as well as file contents (commit-msg, pre-push, history).
+scan_commit_messages = true
+# Values reserved for documentation and tests (each rule's `examples` list, plus the
+# documentation IP ranges 192.0.2.x, 198.51.100.x and 203.0.113.x) are ignored, so sample
+# data written the recommended way doesn't block a commit. Set this to true to report
+# them as well, for example to check that the guard works.
+report_examples = false
+# Rules with severity = "warn" are reported but don't block. Set this to true to make
+# every rule block. For a one-off check, `privacy_guard.py history --strict` does the same.
+strict = false
+
+[allowlist]
+# Files whose repo-relative path matches are not scanned for content.
+# File-name rules below still apply to them. Example: paths = ['^docs/screenshots/']
+paths = []
+# A finding is dropped when the value found matches one of these: the username in a
+# home-folder path, the password in a URL, the digits of a phone number, and so on.
+# Example: values = ['^198\.51\.100\.7$']
+values = []
+# Author, committer and tagger emails that are fine to publish.
+commit_emails = [
+  '(?i)^[^@\s]+@users\.noreply\.github\.com$',
+  '(?i)^noreply@github\.com$',
+]
+# Commits whose findings you have checked and accept as they are, for example an old
+# commit that is already public. Full or abbreviated commit ids (at least 7 characters).
+commits = []
+
+# --------------------------------------------------------------------------
+# File names that should never be committed. Matched against the
+# repo-relative path with forward slashes. `ignore` lists allowed exceptions.
+
+[[files]]
+id = "env-file"
+category = "secret"
+description = "an environment file (.env), which usually holds secrets"
+path = '(?i)(?:^|/)\.env(?:rc|\.[^/]*)?$'
+ignore = ['(?i)(?:^|/)\.env(?:\.[^/]*)?\.(?:example|sample|template|dist|defaults)$']
+
+[[files]]
+id = "key-file"
+category = "secret"
+description = "a private key, keystore or password database file"
+path = '(?i)(?:^|/)(?:id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?|[^/]*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx))$'
+
+[[files]]
+id = "certificate-file"
+category = "secret"
+description = "a certificate file (often kept next to its private key)"
+path = '(?i)\.(?:crt|cer|der)$'
+
+[[files]]
+id = "terraform-state"
+category = "secret"
+description = "a Terraform state file, which stores secrets in plain text"
+path = '(?i)(?:^|/)[^/]*\.tfstate(?:\.backup)?$'
+
+[[files]]
+id = "terraform-vars"
+category = "secret"
+description = "a Terraform variables file, which often holds secrets"
+path = '(?i)\.tfvars(?:\.json)?$'
+
+[[files]]
+id = "credentials-file"
+category = "secret"
+description = "a credentials file"
+path = '(?i)(?:^|/)(?:credentials(?:\.json)?|client_secret[^/]*\.json|service[-_]?account[^/]*\.json|\.netrc|_netrc|\.git-credentials|\.pgpass|\.htpasswd|\.pypirc)$'
+
+[[files]]
+id = "signing-properties"
+category = "secret"
+description = "an app signing properties file, which holds keystore passwords"
+path = '(?i)(?:^|/)(?:keystore|signing)\.properties$'
+
+# --------------------------------------------------------------------------
+# Content rules.
+#   severity       "block" (the default) or "warn". Secret rules always block.
+#   ignore         matches that are never reported
+#   examples       values reserved for documentation and tests; ignored unless
+#                  settings.report_examples is true
+#   ignore_before  matches are skipped when the text just before them matches
+#   paths          the rule only applies to files whose path matches
+#   check          an extra test in privacy_guard.py that cuts false alarms
+#   normalise      "digits": `ignore`, `examples` and allowlist values see only the digits
+# If a pattern has a group named `value`, `ignore`, `examples`, `check` and allowlist
+# values see only that part.
+
+# Placeholders and template variables that are not secrets.
+#   placeholders: example, changeme, your_..., xxxx, a URL
+#   templates:    ${VAR}, $(cmd), $VAR, %(name)s, %VAR%, <name>, {{ name }}
+
+[[rules]]
+id = "private-key"
+category = "secret"
+description = "a private key block"
+regex = '-{5}BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-{5}'
+
+[[rules]]
+id = "aws-access-key-id"
+category = "secret"
+description = "an AWS access key ID"
+regex = '(?<![A-Z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Z0-9])'
+
+[[rules]]
+id = "aws-secret-access-key"
+category = "secret"
+description = "an AWS secret access key"
+regex = '''(?i)aws[_.-]?secret[_.-]?(?:access[_.-]?)?key["']?\s*[:=]\s*["']?(?P<value>[A-Za-z0-9/+]{40})(?![A-Za-z0-9/+=])'''
+
+[[rules]]
+id = "github-token"
+category = "secret"
+description = "a GitHub token"
+regex = '(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{50,255})(?![A-Za-z0-9_])'
+
+[[rules]]
+id = "google-api-key"
+category = "secret"
+description = "a Google API key"
+regex = '(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])'
+
+[[rules]]
+id = "google-oauth"
+category = "secret"
+description = "a Google OAuth client secret or access token"
+regex = '(?<![A-Za-z0-9_-])(?:GOCSPX-[A-Za-z0-9_-]{28}|ya29\.[A-Za-z0-9_-]{20,})'
+
+[[rules]]
+id = "slack-token"
+category = "secret"
+description = "a Slack token"
+regex = '(?<![A-Za-z0-9-])(?:xox[abposr]-[A-Za-z0-9-]{10,250}|xapp-[0-9]-[A-Za-z0-9-]{10,250})'
+
+[[rules]]
+id = "slack-webhook"
+category = "secret"
+description = "a Slack webhook URL"
+regex = 'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'
+
+[[rules]]
+id = "discord-webhook"
+category = "secret"
+description = "a Discord webhook URL (anyone with it can post as the webhook)"
+regex = 'https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/(?:v[0-9]+/)?webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,80}'
+
+[[rules]]
+id = "telegram-bot-token"
+category = "secret"
+description = "a Telegram bot token"
+regex = '(?<![0-9A-Za-z])[0-9]{8,10}:AA[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])'
+
+[[rules]]
+id = "pypi-token"
+category = "secret"
+description = "a PyPI API token"
+regex = '(?<![A-Za-z0-9_-])pypi-AgE[A-Za-z0-9_-]{50,}'
+
+[[rules]]
+id = "npmrc-auth"
+category = "secret"
+description = "an npm registry credential in .npmrc"
+regex = '''(?:^|[\s:])_(?:authToken|auth|password)\s*=\s*["']?(?P<value>[^\s"']{8,})'''
+paths = ['(?i)(?:^|/)\.npmrc$']
+ignore = ['^\$\{', '(?i)^(?:example|changeme)']
+
+[[rules]]
+id = "openai-style-key"
+category = "secret"
+description = "an sk- style API key (OpenAI, Anthropic and others)"
+regex = '(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
+check = "letters_and_digits"
+# CSS class names are not keys: class="sk-button-...", .sk-button { ... } in a style
+# sheet, and clsx("sk-button-...") or similar class-name helpers.
+ignore_before = [
+  '''(?i)\bclass(?:Name)?\s*=\s*["'][^"']*$''',
+  '(?:^|[\s,{}>~+(])\.$',
+  '''(?i)\b(?:clsx|classnames|classNames|cn|cx|twMerge|twJoin)\s*\([^)]*["'`]$''',
+]
+
+[[rules]]
+id = "stripe-live-key"
+category = "secret"
+description = "a Stripe live secret key"
+regex = '(?<![A-Za-z0-9_])(?:sk|rk)_live_[A-Za-z0-9]{16,247}'
+
+[[rules]]
+id = "gitlab-token"
+category = "secret"
+description = "a GitLab personal access token"
+regex = '(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{20,}'
+
+[[rules]]
+id = "huggingface-token"
+category = "secret"
+description = "a Hugging Face token"
+regex = '(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{30,}'
+
+[[rules]]
+id = "npm-token"
+category = "secret"
+description = "an npm access token"
+regex = '(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])'
+
+[[rules]]
+id = "discord-bot-token"
+category = "secret"
+description = "a Discord bot token"
+regex = '(?<![A-Za-z0-9_-])[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}(?![A-Za-z0-9_-])'
+
+[[rules]]
+id = "jwt"
+category = "secret"
+description = "a JSON Web Token"
+regex = '(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'
+
+[[rules]]
+id = "url-credentials"
+category = "secret"
+description = "a password inside a URL (scheme://user:password@host)"
+# The user name may be empty (redis://:password@host). Local development URLs are skipped.
+regex = '''(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\s:/@"']{0,64}:(?P<value>[^\s:/@"']{3,128})@(?!(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?:[:/"'\s]|$))'''
+ignore = [
+  '(?i)^(?:password|passwd|pass|pwd|secret|changeme|example|x+|\*+)$',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+]
+
+# The rules below look for a value assigned to a name such as password, secret, token or
+# api_key, also with a suffix (api_key_prod, secretValue), but not to names that only
+# describe a secret: ...name, ...ref, ...id, ...type, ...file, ...path, ...url,
+# ...endpoint, ...header, ...encoder, ...issuer, ...audience, ...region, ...encoding,
+# ...regex, ...scope, ...hash, ...version and similar.
+
+[[rules]]
+id = "secret-assignment"
+category = "secret"
+description = "a quoted value assigned to a password, secret, token or key"
+# The quotes may be escaped (JSON strings, Jupyter notebooks), backticks, or Python
+# byte and raw strings (b"...", r'...').
+regex = '''(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)(?:[_.-][a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\\?["']?\s*[:=]\s*(?:[bBrRuUfF]{1,2})?\\?["'`](?P<value>[^"'`\s\\]{12,200})\\?["'`]'''
+check = "letters_and_digits"
+ignore = [
+  '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+]
+
+[[rules]]
+id = "env-style-secret"
+category = "secret"
+description = "an unquoted secret in NAME=value form (as in .env, Compose and Dockerfiles)"
+regex = '''^\s*(?:#\s*)?(?:-\s+)?(?:(?:export|ENV|ARG)\s+)?[A-Za-z0-9_]{0,60}?(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY)(?:_[A-Z0-9]{1,12})?(?<!_NAME)(?<!_REF)(?<!_ID)(?<!_TYPE)(?<!_HEADER)(?<!_PATH)(?<!_FILE)(?<!_DIR)(?<!_URL)(?<!_URI)(?<!_ENDPOINT)(?<!_ISSUER)(?<!_AUDIENCE)(?<!_REGION)(?<!_ENCODING)(?<!_REGEX)(?<!_SCOPE)(?<!_HASH)(?<!_VERSION)\s*=\s*(?P<value>[^\s"'#][^\s"']{11,199})'''
+check = "letters_and_digits"
+ignore = [
+  '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+]
+
+[[rules]]
+id = "dockerfile-secret"
+category = "secret"
+description = "a secret in a Dockerfile ENV or ARG line"
+# The forms the rules above don't cover: `ENV KEY value` (also quoted) and lower-case
+# names in `ENV key=value`. Commented-out lines are scanned too.
+regex = '''(?i)^\s*(?:#\s*)?(?:ENV|ARG)\s+(?:(?-i:(?=[A-Za-z0-9_]*[a-z]))[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s*=\s*|[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s+["']?)(?P<value>[^\s"'#=][^\s"']{7,199})'''
+paths = ['(?i)(?:^|/)(?:[^/]*\.)?(?:dockerfile|containerfile)(?:\.[^/]*)?$']
+check = "letters_and_digits"
+ignore = [
+  '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '^(?:/|~/|\.{1,2}/)',
+]
+
+[[rules]]
+id = "xml-secret"
+category = "secret"
+description = "a secret in an XML element such as <password>"
+regex = '''(?i)<[a-z0-9_.:-]{0,40}?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)>(?P<value>[^<\s]{8,200})</'''
+check = "letters_and_digits"
+ignore = [
+  '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+]
+
+[[rules]]
+id = "config-secret"
+category = "secret"
+description = "a secret in a config file (YAML, .properties, INI, TOML or Compose)"
+# Unquoted values are common in config files but too noisy to look for in code.
+# Commented-out lines are not scanned by this rule, values that are file paths are
+# skipped, and so are lower-case kebab-case resource names such as my-tls-secret-v1.
+regex = '''(?i)^\s*(?:-\s+)?["']?[a-z0-9_.-]{0,60}?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)[a-z0-9_.-]{0,20}(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)["']?\s*[:=]\s*["']?(?P<value>[^\s"'#,;][^\s"']{7,199})'''
+paths = [
+  '(?i)\.(?:ya?ml|properties|ini|cfg|conf|toml)$',
+  '(?i)(?:^|/)(?:\.env[^/]*|[^/]*compose[^/]*\.ya?ml)$',
+]
+check = "letters_and_digits"
+ignore = [
+  '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '^(?:/|~/|\.{1,2}/|[A-Za-z]:[\\/])',
+  '^(?=[a-z0-9-]*\b(?:secrets?|passwords?|passwd|tokens?|creds?|credentials?|keys?)\b)[a-z0-9]+(?:-[a-z0-9]+)+$',
+]
+
+# --------------------------------------------------------------------------
+# Personal details that secret scanners usually miss.
+
+[[rules]]
+id = "home-path-windows"
+category = "personal"
+description = "a Windows home-folder path containing a username"
+# Also Git Bash (/c/Users/...), WSL (/mnt/c/Users/...), Cygwin (/cygdrive/c/Users/...),
+# file URLs (C%3A), escaped JSON and Java properties (C\:\\Users). Trailing punctuation
+# isn't part of the username, so "See C:\Users\<name>." still matches the lists below.
+regex = '''(?i)(?<![A-Za-z0-9])(?:[A-Z]\\?:|[A-Z]%3A|/mnt/[a-z]|/cygdrive/[a-z]|/[a-z](?=/[U]sers/))(?:\\{1,4}|/)Users(?:\\{1,4}|/)(?P<value>[^\\/\s"'<>|:*?]{0,63}[^\\/\s"'<>|:*?.,;!)\]])'''
+ignore = [
+  '(?i)^(?:public|default|all|defaultapppool|administrator|runneradmin|user|username|yourname|your-name|your_name|you|me|name)$',
+  '^[$%~{(.\[]',
+]
+examples = ['(?i)^example(?:[-_.]?user)?$']
+
+[[rules]]
+id = "home-path-linux"
+category = "personal"
+description = "a Linux home-folder path containing a username"
+regex = '(?<![\w.~-])/home/(?P<value>[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,30}[A-Za-z0-9_])?)'
+ignore = [
+  '(?i)^(?:user|username|yourname|your-name|your_name|you|me|name|runner|ubuntu|ec2-user|pi|vagrant|node|app|admin|linuxbrew|vscode|nonroot|appuser|jovyan|coder|gitpod|codespace)$',
+  '^[0-9]+$',
+  '(?i)\.(?:html?|php|aspx?|jsp|m?js|css|json|xml|txt|png|jpe?g|gif|svg|webp|ico)$',
+]
+examples = ['(?i)^example(?:[-_.]?user)?$']
+# Web routes in code are not home folders: router.get("/home/..."), app.use("/home/..."),
+# fetch("/home/..."), @GetMapping("/home/..."), @bp.route("/home/..."), Django
+# path("/home/..."), React Router { path: "/home/..." }, a Kubernetes ingress
+# `- path: /home/...`, and href, to, src or action inside an HTML or JSX tag, also on a
+# line of their own (href="/home/..."). A Dockerfile WORKDIR is a folder inside the image.
+# Only these forms count, so cache.get("/home/<name>/..."), src = "/home/<name>/...",
+# `path: /home/<name>/...` and `git fetch /home/<name>` are still reported.
+ignore_before = [
+  '''(?i)(?:\b(?:router|routes?|app|server|api|axios|http|express|client|request|session)\s*\.\s*(?:get|post|put|patch|delete|head|options|use|all|route|push|replace)\s*\(\s*|\b(?:fetch|redirect|navigate|navigateTo)\s*\(\s*|<[A-Za-z][^<>]*\s(?:href|to|action|src)\s*=\s*\{?\s*)["'`]$''',
+  '''@(?:Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:(?:value|path)\s*=\s*)?\{?\s*["']$''',
+  '''@[A-Za-z_][\w.]*\.(?:route|get|post|put|patch|delete)\s*\(\s*["']$''',
+  '''(?<![\w.])(?:re_)?path\s*\(\s*r?["']$''',
+  '''(?:^\s*-\s*|[{,]\s*)path\s*:\s*["'`]?$''',
+  '''^\s*(?:href|to|src|action)=\{?["'`]$''',
+  '(?i)^\s*WORKDIR\s+["\[]?$',
+]
+
+[[rules]]
+id = "home-path-macos"
+category = "personal"
+description = "a macOS home-folder path containing a username"
+regex = '''(?<![\w.~-])/Users/(?P<value>[^/\s"'<>|:*?\\]{0,63}[^/\s"'<>|:*?\\.,;!)\]])'''
+ignore = [
+  '(?i)^(?:shared|guest|user|username|yourname|your-name|your_name|you|me|name|runner)$',
+  '^[$%~{(.]',
+  '^[0-9]+$',
+]
+examples = ['(?i)^example(?:[-_.]?user)?$']
+# The same web routes as home-path-linux.
+ignore_before = [
+  '''(?i)(?:\b(?:router|routes?|app|server|api|axios|http|express|client|request|session)\s*\.\s*(?:get|post|put|patch|delete|head|options|use|all|route|push|replace)\s*\(\s*|\b(?:fetch|redirect|navigate|navigateTo)\s*\(\s*|<[A-Za-z][^<>]*\s(?:href|to|action|src)\s*=\s*\{?\s*)["'`]$''',
+  '''@(?:Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:(?:value|path)\s*=\s*)?\{?\s*["']$''',
+  '''@[A-Za-z_][\w.]*\.(?:route|get|post|put|patch|delete)\s*\(\s*["']$''',
+  '''(?<![\w.])(?:re_)?path\s*\(\s*r?["']$''',
+  '''(?:^\s*-\s*|[{,]\s*)path\s*:\s*["'`]?$''',
+  '''^\s*(?:href|to|src|action)=\{?["'`]$''',
+]
+
+[[rules]]
+id = "email"
+category = "personal"
+description = "an email address"
+regex = '(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){1,8}[A-Za-z]{2,24}(?![A-Za-z0-9-])'
+# Never reported: GitHub noreply, automated senders (including the sign-off line in
+# Dependabot's commit messages), SSH remotes (git@github.com:...), image names such as
+# logo@2x.png, file names such as theme@dark.css, package versions such as
+# npm:next@14.2.0-canary.beta, one-letter names such as X@W.T (matrix maths) and
+# systemd template units such as app@prod.service.
+ignore = [
+  '(?i)@users\.noreply\.github\.com$',
+  '(?i)^(?:no-?reply|do-?not-?reply|notifications?)@',
+  '(?i)^support@github\.com$',
+  '(?i)^git@',
+  '(?i)@[0-9]+(?:\.[0-9]+)?x\.[a-z0-9]+$',
+  '(?i)@v?[0-9]+\.[0-9]+',
+  '(?i)\.(?:css|scss|sass|less|js|mjs|cjs|ts|tsx|jsx|json|ico|png|jpe?g|gif|svg|webp|avif|woff2?|map)$',
+  '^[A-Za-z0-9]@[A-Za-z0-9]\.',
+  '(?i)\.(?:service|socket|timer|target|mount|automount|path|slice|scope|swap|device)$',
+]
+# The domains reserved for documentation: example.com, example.net, example.org.
+examples = ['(?i)@(?:[a-z0-9-]+\.)*example\.(?:com|net|org)$']
+# user:password@host inside a URL is reported by url-credentials instead, and a GitHub
+# Actions `uses: owner/action@ref` is not an address.
+ignore_before = ['://[^\s/@:]{0,64}:$', '(?i)\buses:\s*\S*$']
+
+# Phone examples: Ofcom's drama ranges for mobiles (07700 900xxx), London (020 7946 0xxx)
+# and the unused 01632 area (01632 960xxx), and North America's 555-0100 to 555-0199.
+# Phone numbers, postcodes, IP addresses and Discord-style IDs warn rather than block,
+# because ordinary numbers in code can look like them. Set strict = true to block them.
+
+[[rules]]
+id = "phone-international"
+category = "personal"
+description = "a phone number in international (+) format"
+regex = '(?<![\w+])\+[1-9][0-9 ().\u00a0-]{7,20}[0-9](?![0-9])'
+check = "phone"
+severity = "warn"
+normalise = "digits"
+examples = [
+  '^440?(?:7700900|2079460|1632960)[0-9]{3}$',
+  '^1[2-9][0-9]{2}55501[0-9]{2}$',
+]
+
+[[rules]]
+id = "phone-uk"
+category = "personal"
+description = "a UK phone number"
+regex = '(?<![\w+(.-])\(?0[1-9][0-9]{1,4}\)?(?:[ \u00a0-]?[0-9]{3,4}){1,2}(?![\w-]|\.[0-9])'
+check = "phone"
+severity = "warn"
+normalise = "digits"
+examples = ['^0(?:7700900|2079460|1632960)[0-9]{3}$']
+
+[[rules]]
+id = "phone-north-america"
+category = "personal"
+description = "a North American phone number"
+# The look-behinds skip numbers already written as +1 ..., which phone-international reports.
+regex = '(?<![\w+(.-])(?<!\+1[ .-])\(?[2-9][0-9]{2}\)?[ .-]?[2-9][0-9]{2}[ .-][0-9]{4}(?![\w.-])'
+check = "phone"
+severity = "warn"
+normalise = "digits"
+examples = ['^[2-9][0-9]{2}55501[0-9]{2}$']
+
+[[rules]]
+id = "public-ipv4"
+category = "personal"
+description = "a public IPv4 address"
+regex = '(?<![\w.])(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?![\w]|\.[0-9])'
+check = "public_ip"
+severity = "warn"
+# Version numbers ("version": "a.b.c.d", appVersion, <AssemblyVersion>, pkg==a.b.c.d,
+# pkg >= a.b.c.d, image tags such as web:a.b.c.d, Maven coordinates such as
+# com.acme:client:a.b.c.d) and object identifiers (2.5.4.3) look the same. A comparison
+# such as `ip == a.b.c.d` is still reported.
+ignore_before = [
+  '''(?i)version["'>]?\s*[:=]?\s*["']?$''',
+  '''(?i)(?:\b|_)(?:release|build|oid)["']?\s*[:=]?\s*["']?$''',
+  '[A-Za-z0-9_.\]-](?:==|>=|<=|~=|!=)\s*$',
+  '[A-Za-z0-9_.\]-]\s+(?:>=|<=|~=)\s*$',
+  '''(?:^|[\s"'])[\^~]$''',
+  '/[A-Za-z0-9_.-]+:$',
+  '(?i)\bimage:\s*[A-Za-z0-9_.-]+:$',
+  '[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+:[A-Za-z0-9_.-]+:$',
+]
+ignore = ['^(?:2\.5\.|1\.2\.840\.|1\.3\.6\.1\.)']
+
+[[rules]]
+id = "public-ipv6"
+category = "personal"
+description = "a public IPv6 address"
+regex = '(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:]|\.[0-9A-Fa-f])'
+check = "public_ip"
+severity = "warn"
+
+[[rules]]
+id = "uk-postcode"
+category = "personal"
+description = "a UK postcode"
+# Upper case with or without the space; lower or mixed case only with a space (or a
+# non-breaking space). Not after # (CSS colours). The letters follow Royal Mail's rules:
+# no Q, V or X first and no I, J or Z second (apart from the ZZ99 placeholder).
+regex = '(?<![A-Za-z0-9#])(?:(?:ZZ99|[A-PR-UWYZ][A-HK-Y]?[0-9][A-Z0-9]?|GIR)[  ]?[0-9][ABD-HJLNP-UW-Z]{2}|(?i:zz99|[a-pr-uwyz][a-hk-y]?[0-9][a-z0-9]?|gir)[  ][0-9](?i:[abd-hjlnp-uw-z]){2})(?![A-Za-z0-9])'
+severity = "warn"
+# Sizes and ordinals (M1 8GB, S3 1TB, Q1 1st, p99 1ns, h1 2px) and six-character hex
+# colours without the # ("FA12DE"). An upper-case postcode written without its space and
+# made only of hex characters (0-9, A-F) is skipped too.
+ignore = [
+  '[  ][0-9](?:st|nd|rd|th|ns|ms|us|px|pt|em|gb|mb|kb|tb|hz)$',
+  '[  ]?[0-9](?:GB|MB|KB|TB)$',
+  '^[0-9A-F]{6}$',
+]
+# ZZ99 postcodes are not real places (the NHS uses them as placeholders).
+examples = ['(?i)^ZZ99[  ]?[0-9][A-Z]{2}$']
+
+[[rules]]
+id = "discord-id"
+category = "personal"
+description = "a Discord-style ID (a 17-20 digit snowflake)"
+regex = '(?<![0-9A-Za-z_.])[1-9][0-9]{16,19}(?![0-9A-Za-z_]|\.[0-9])'
+check = "snowflake"
+severity = "warn"
+# The ID inside a Discord webhook URL is reported with the webhook.
+ignore_before = ['(?i)/webhooks/$']

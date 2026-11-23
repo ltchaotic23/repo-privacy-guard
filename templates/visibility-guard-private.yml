@@ -1,0 +1,51 @@
+# Visibility guard, "stay private" mode (from repo-privacy-guard).
+#
+# For a repository that must never be public. The `public` event fires the moment its
+# visibility changes to public; the weekly run and every push are a backstop. A failed run
+# shows as a red cross in the Actions tab, and GitHub notifies the person whose action
+# started the run (for the weekly run, whoever last changed the schedule) if their
+# notification settings allow it; check yours under Settings > Notifications > Actions.
+# It can't undo the change: set the repository back to private straight away
+# (Settings > General > Danger Zone), then work out what was exposed and revoke any
+# secrets in it.
+#
+# It checks the API's `visibility` field, so an `internal` repository (GitHub Enterprise)
+# counts as not private.
+#
+# Limits: `public` only fires from a workflow on the default branch, the workflow never
+# looks at the code itself, and a repository owner can disable or delete it. GitHub
+# documents that it disables scheduled workflows in public repositories after 60 days
+# without activity; don't rely on the weekly run alone. It is an alarm, not a lock.
+name: Visibility guard
+
+on:
+  public:
+  push:
+  schedule:
+    - cron: "41 7 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  must-stay-private:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if this repository is public
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$EVENT_NAME" = "public" ]; then
+            echo "::error title=Repository made public::$REPOSITORY has just been made PUBLIC. Switch it back to private immediately."
+            exit 1
+          fi
+          visibility=$(gh api "repos/$REPOSITORY" --jq .visibility)
+          if [ "$visibility" != "private" ]; then
+            echo "::error title=Repository is not private::$REPOSITORY is $visibility, not private. Switch it back to private immediately."
+            exit 1
+          fi
+          echo "$REPOSITORY is private."

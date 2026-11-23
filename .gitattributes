@@ -1,0 +1,8 @@
+* text=auto
+# The guard's files keep Unix line endings on every platform: the hooks are shell scripts,
+# and the installer compares the files with what it installed.
+.githooks/pre-commit text eol=lf
+.githooks/pre-push text eol=lf
+.githooks/commit-msg text eol=lf
+.githooks/privacy_guard.py text eol=lf
+.githooks/privacy-guard.toml text eol=lf
