@@ -426,6 +426,33 @@ class ReservedExamples(unittest.TestCase):
         self.assertFalse(any(p.search(j("07700900", "1234")) for p in patterns))
 
 
+class ReservedTestDomains(unittest.TestCase):
+    """Addresses at the top-level domains reserved for testing (RFC 2606, RFC 6761) are
+    examples, like example.com: hidden by default and reported on request."""
+
+    RESERVED = (j("user", "@", "example.invalid"), j("a", "@", "b.test"), j("x", "@", "mail.example"),
+                j("y", "@", "foo.localhost"), j("someone", "@", "sub.mail.test"))
+    REAL = (j("z", "@", "gmail.com"), j("w", "@", "company.co.uk"), j("someone", "@", "test.com"),
+            j("someone", "@", "example.invalid.co.uk"), j("someone", "@", "mytest.org"))
+
+    def test_ignored_by_default(self) -> None:
+        for text in self.RESERVED:
+            with self.subTest(text=text):
+                self.assertNotIn("email", rule_ids(text, CONFIG))
+
+    def test_reported_with_report_examples(self) -> None:
+        # a@b.test is left out: one-letter names such as X@W.T are never reported.
+        for text in self.RESERVED[:1] + self.RESERVED[2:]:
+            with self.subTest(text=text):
+                self.assertIn("email", rule_ids(text, STRICT))
+
+    def test_real_addresses_still_block(self) -> None:
+        for text in self.REAL:
+            with self.subTest(text=text):
+                found = pg.scan_events([pg.LineEvent("", "notes.md", 1, text)], CONFIG)
+                self.assertEqual([(f.rule_id, f.severity) for f in found], [("email", "block")])
+
+
 class PublicAddresses(unittest.TestCase):
     """The public-IP check with the default config.
 

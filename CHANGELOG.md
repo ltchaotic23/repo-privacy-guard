@@ -123,3 +123,5 @@ review and testing, and the changes that came out of those rounds are listed und
 - Allowlist patterns that only limit the length (such as `'.{10}'`) are rejected as too
   broad.
 - `version = true` in the config is rejected, and config errors no longer show the full path.
+- Email addresses at the top-level domains reserved for testing (`.test`, `.example`,
+  `.invalid`, `.localhost`) count as examples, like `example.com`.

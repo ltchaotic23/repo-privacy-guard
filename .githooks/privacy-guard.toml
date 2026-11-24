@@ -416,8 +416,13 @@ ignore = [
   '^[A-Za-z0-9]@[A-Za-z0-9]\.',
   '(?i)\.(?:service|socket|timer|target|mount|automount|path|slice|scope|swap|device)$',
 ]
-# The domains reserved for documentation: example.com, example.net, example.org.
-examples = ['(?i)@(?:[a-z0-9-]+\.)*example\.(?:com|net|org)$']
+# The domains reserved for documentation (example.com, example.net, example.org) and the
+# top-level domains reserved for testing (.test, .example, .invalid, .localhost), with
+# any subdomains.
+examples = [
+  '(?i)@(?:[a-z0-9-]+\.)*example\.(?:com|net|org)$',
+  '(?i)@(?:[a-z0-9-]+\.)+(?:test|example|invalid|localhost)$',
+]
 # user:password@host inside a URL is reported by url-credentials instead, and a GitHub
 # Actions `uses: owner/action@ref` is not an address.
 ignore_before = ['://[^\s/@:]{0,64}:$', '(?i)\buses:\s*\S*$']

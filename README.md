@@ -48,7 +48,8 @@ and push), and once more on GitHub.
 
 Values reserved for documentation and tests are ignored by default, so sample data written
 the recommended way doesn't block a commit: `example.com`, `example.net` and `example.org`
-addresses; the documentation IP ranges `192.0.2.x`, `198.51.100.x`, `203.0.113.x` and
+addresses, and addresses at the top-level domains reserved for testing (`.test`,
+`.example`, `.invalid` and `.localhost`); the documentation IP ranges `192.0.2.x`, `198.51.100.x`, `203.0.113.x` and
 `2001:db8::`; Ofcom's drama phone numbers (such as `07700 900xxx`) and North America's
 `555-0100` to `555-0199`; the placeholder postcode `ZZ99 9ZZ`; and the username
 `exampleuser`. Use `--report-examples`, or set `report_examples = true` in the config, to
