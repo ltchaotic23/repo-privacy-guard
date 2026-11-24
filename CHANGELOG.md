@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (24 November 2026)
 
 The first public release. Before release it went through several rounds of independent
 review and testing, and the changes that came out of those rounds are listed under
