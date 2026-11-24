@@ -55,18 +55,26 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
+          base="refs/remotes/origin/$BASE_REF"
           guard="$RUNNER_TEMP/guard"
           mkdir -p "$guard"
-          if git cat-file -e "origin/$BASE_REF:.githooks/privacy_guard.py" 2>/dev/null; then
-            git show "origin/$BASE_REF:.githooks/privacy_guard.py" > "$guard/privacy_guard.py"
-            git show "origin/$BASE_REF:.githooks/privacy-guard.toml" > "$guard/privacy-guard.toml"
+          if ! git diff --quiet "$base"...HEAD -- .githooks/; then
+            echo "::warning::This pull request changes files under .githooks/. Review those changes carefully before merging."
+          fi
+          if git cat-file -e "$base:.githooks/privacy_guard.py" 2>/dev/null; then
+            git show "$base:.githooks/privacy_guard.py" > "$guard/privacy_guard.py"
+            git show "$base:.githooks/privacy-guard.toml" > "$guard/privacy-guard.toml"
           else
             echo "::warning::The base branch has no privacy guard yet, so this pull request's own copy is used."
             cp .githooks/privacy_guard.py .githooks/privacy-guard.toml "$guard/"
           fi
           if ! python3 "$guard/privacy_guard.py" check-config --config .githooks/privacy-guard.toml; then
-            if git diff --quiet "origin/$BASE_REF"...HEAD -- .githooks/privacy_guard.py; then
+            if git diff --quiet "$base"...HEAD -- .githooks/privacy_guard.py; then
               echo "::error::This pull request's privacy-guard.toml doesn't load with the base branch's scanner. Fix the config."
+              exit 1
+            fi
+            if ! python3 .githooks/privacy_guard.py check-config --config .githooks/privacy-guard.toml; then
+              echo "::error::This pull request's privacy-guard.toml doesn't load with the pull request's own privacy_guard.py either. Fix the config."
               exit 1
             fi
             echo "::warning::This pull request's privacy-guard.toml doesn't load with the base branch's scanner. That is expected because the pull request also upgrades privacy_guard.py."

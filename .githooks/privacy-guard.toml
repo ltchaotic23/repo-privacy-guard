@@ -21,7 +21,8 @@ version = 1
 #   privacy-guard:allow                         hides every personal rule on the line
 # Markers never hide secrets (allow those below, in [allowlist], where they're reviewed),
 # and they have no effect in commit or tag messages. A marker written any other way
-# (spaces, capitals, quotes) does nothing, and a warning says so.
+# (spaces, capitals, quotes, an unknown rule id) does nothing, and when a finding remains
+# on the line a warning says so.
 # Set to "" to turn inline markers off.
 inline_allow_marker = "privacy-guard:allow"
 # Block commits whose author or committer email isn't in allowlist.commit_emails.
@@ -109,6 +110,7 @@ path = '(?i)(?:^|/)(?:keystore|signing)\.properties$'
 #                  settings.report_examples is true
 #   ignore_before  matches are skipped when the text just before them matches
 #   paths          the rule only applies to files whose path matches
+#   ignore_paths   files whose path matches are skipped by this rule
 #   check          an extra test in privacy_guard.py that cuts false alarms
 #   normalise      "digits": `ignore`, `examples` and allowlist values see only the digits
 # If a pattern has a group named `value`, `ignore`, `examples`, `check` and allowlist
@@ -201,9 +203,9 @@ check = "letters_and_digits"
 # CSS class names are not keys: class="sk-button-...", .sk-button { ... } in a style
 # sheet, and clsx("sk-button-...") or similar class-name helpers.
 ignore_before = [
-  '''(?i)\bclass(?:Name)?\s*=\s*["'][^"']*$''',
+  '''(?i)\bclass(?:Name)?\s*=\s*(?:\{\s*)?(?:"[^"]*|'[^']*|`[^`]*)$''',
   '(?:^|[\s,{}>~+(])\.$',
-  '''(?i)\b(?:clsx|classnames|classNames|cn|cx|twMerge|twJoin)\s*\([^)]*["'`]$''',
+  '''(?i)\b(?:clsx|classnames|classNames|cn|cx|twMerge|twJoin)\s*\([^)]*(?:"[^"]*|'[^']*|`[^`]*)$''',
 ]
 
 [[rules]]
@@ -246,11 +248,12 @@ regex = '(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-
 id = "url-credentials"
 category = "secret"
 description = "a password inside a URL (scheme://user:password@host)"
-# The user name may be empty (redis://:password@host). Local development URLs are skipped.
-regex = '''(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\s:/@"']{0,64}:(?P<value>[^\s:/@"']{3,128})@(?!(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?:[:/"'\s]|$))'''
+# The user name may be empty (redis://:password@host). Local development URLs and
+# well-known local service defaults where username equals password are skipped.
+regex = '''(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,20}://(?!(?i:(?P<_u>postgres|guest|root|mysql|mariadb|mongodb|mongo|redis|rabbitmq|minioadmin):(?P=_u)@))[^\s:/@"']{0,64}:(?P<value>[^\s:/@"']{3,128})@(?!(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?:[:/"'\s]|$))'''
 ignore = [
   '(?i)^(?:password|passwd|pass|pwd|secret|changeme|example|x+|\*+)$',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
 ]
 
 # The rules below look for a value assigned to a name such as password, secret, token or
@@ -264,12 +267,13 @@ id = "secret-assignment"
 category = "secret"
 description = "a quoted value assigned to a password, secret, token or key"
 # The quotes may be escaped (JSON strings, Jupyter notebooks), backticks, or Python
-# byte and raw strings (b"...", r'...').
-regex = '''(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)(?:[_.-][a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\\?["']?\s*[:=]\s*(?:[bBrRuUfF]{1,2})?\\?["'`](?P<value>[^"'`\s\\]{12,200})\\?["'`]'''
+# byte and raw strings (b"...", r'...'), and an optional type annotation may precede '='.
+regex = '''(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)(?:[_.-][a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!lifespan)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)(?<!existingsecret)(?<!existing_secret)(?<!existing-secret)(?<!tlssecret)(?<!tls_secret)(?<!tls-secret)(?<!pullsecret)(?<!pull_secret)(?<!pull-secret)(?<!(?-i:secretKey))(?<!(?-i:passwordKey))\\?["']?(?:\s*:\s*(?:&(?:'[a-z_]+\s+)?)?[A-Za-z_][A-Za-z0-9_.\[\]| ?]{0,32}=\s*|\s*[:=]\s*)(?:[bBrRuUfF]{1,2})?\\?["'`](?P<value>[^"'`\s\\]{12,200})\\?["'`]'''
+ignore_paths = ['(?i)(?:^|/)(?:package(?:-lock)?\.json|pnpm-lock\.ya?ml|yarn\.lock|pyproject\.toml|poetry\.lock|uv\.lock|Cargo\.(?:toml|lock))$']
 check = "letters_and_digits"
 ignore = [
   '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
 ]
 
 [[rules]]
@@ -280,7 +284,7 @@ regex = '''^\s*(?:#\s*)?(?:-\s+)?(?:(?:export|ENV|ARG)\s+)?[A-Za-z0-9_]{0,60}?(?
 check = "letters_and_digits"
 ignore = [
   '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
 ]
 
 [[rules]]
@@ -289,12 +293,12 @@ category = "secret"
 description = "a secret in a Dockerfile ENV or ARG line"
 # The forms the rules above don't cover: `ENV KEY value` (also quoted) and lower-case
 # names in `ENV key=value`. Commented-out lines are scanned too.
-regex = '''(?i)^\s*(?:#\s*)?(?:ENV|ARG)\s+(?:(?-i:(?=[A-Za-z0-9_]*[a-z]))[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s*=\s*|[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s+["']?)(?P<value>[^\s"'#=][^\s"']{7,199})'''
+regex = '''(?i)^\s*(?:#\s*)?(?:ENV|ARG)\s+(?:(?-i:(?=[A-Za-z0-9_]*[a-z]))[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!lifespan)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s*=\s*|[A-Za-z0-9_]{0,60}?(?:password|passwd|secret|token|api_?key|access_?key|private_?key)(?:_[a-z0-9]{1,12}|(?-i:[A-Z][a-z0-9]{1,12}))?(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!lifespan)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)\s+["']?)(?P<value>[^\s"'#=][^\s"']{7,199})'''
 paths = ['(?i)(?:^|/)(?:[^/]*\.)?(?:dockerfile|containerfile)(?:\.[^/]*)?$']
 check = "letters_and_digits"
 ignore = [
   '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
   '^(?:/|~/|\.{1,2}/)',
 ]
 
@@ -306,7 +310,7 @@ regex = '''(?i)<[a-z0-9_.:-]{0,40}?(?:password|passwd|secret|token|api[_-]?key|a
 check = "letters_and_digits"
 ignore = [
   '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
 ]
 
 [[rules]]
@@ -315,16 +319,18 @@ category = "secret"
 description = "a secret in a config file (YAML, .properties, INI, TOML or Compose)"
 # Unquoted values are common in config files but too noisy to look for in code.
 # Commented-out lines are not scanned by this rule, values that are file paths are
-# skipped, and so are lower-case kebab-case resource names such as my-tls-secret-v1.
-regex = '''(?i)^\s*(?:-\s+)?["']?[a-z0-9_.-]{0,60}?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)[a-z0-9_.-]{0,20}(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)["']?\s*[:=]\s*["']?(?P<value>[^\s"'#,;][^\s"']{7,199})'''
+# skipped, and so are lower-case kebab-case resource names that contain a word such as
+# secret, password, token, cred or key (for example my-tls-secret-v1).
+regex = '''(?i)^\s*(?:-\s+)?["']?[a-z0-9_.-]{0,60}?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)[a-z0-9_.-]{0,20}(?<!name)(?<!ref)(?<!id)(?<!type)(?<!header)(?<!path)(?<!file)(?<!dir)(?<!url)(?<!uri)(?<!endpoint)(?<!encoder)(?<!provider)(?<!format)(?<!length)(?<!ttl)(?<!lifespan)(?<!expiry)(?<!expires)(?<!policy)(?<!rotation)(?<!algorithm)(?<!prefix)(?<!field)(?<!issuer)(?<!audience)(?<!region)(?<!encoding)(?<!regex)(?<!scope)(?<!hash)(?<!version)(?<!existingsecret)(?<!existing_secret)(?<!existing-secret)(?<!tlssecret)(?<!tls_secret)(?<!tls-secret)(?<!pullsecret)(?<!pull_secret)(?<!pull-secret)(?<!(?-i:secretKey))(?<!(?-i:passwordKey))["']?\s*[:=]\s*["']?(?P<value>[^\s"'#,;][^\s"']{7,199})'''
 paths = [
   '(?i)\.(?:ya?ml|properties|ini|cfg|conf|toml)$',
   '(?i)(?:^|/)(?:\.env[^/]*|[^/]*compose[^/]*\.ya?ml)$',
 ]
+ignore_paths = ['(?i)(?:^|/)(?:package(?:-lock)?\.json|pnpm-lock\.ya?ml|yarn\.lock|pyproject\.toml|poetry\.lock|uv\.lock|Cargo\.(?:toml|lock))$']
 check = "letters_and_digits"
 ignore = [
   '(?i)example|sample|placeholder|changeme|change[_-]me|your[_-]|dummy|redacted|xxxx|^https?://',
-  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|<[A-Za-z][A-Za-z0-9_ -]*>|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
+  '\$\{[^}]*\}|\$\([^)]*\)|^\$[A-Za-z_][A-Za-z0-9_]*$|^<[A-Za-z][A-Za-z0-9_ -]*>$|\{\{.*?\}\}|%\([^)]*\)[sd]|%[A-Za-z_][A-Za-z0-9_]*%',
   '^(?:/|~/|\.{1,2}/|[A-Za-z]:[\\/])',
   '^(?=[a-z0-9-]*\b(?:secrets?|passwords?|passwd|tokens?|creds?|credentials?|keys?)\b)[a-z0-9]+(?:-[a-z0-9]+)+$',
 ]
@@ -339,7 +345,7 @@ description = "a Windows home-folder path containing a username"
 # Also Git Bash (/c/Users/...), WSL (/mnt/c/Users/...), Cygwin (/cygdrive/c/Users/...),
 # file URLs (C%3A), escaped JSON and Java properties (C\:\\Users). Trailing punctuation
 # isn't part of the username, so "See C:\Users\<name>." still matches the lists below.
-regex = '''(?i)(?<![A-Za-z0-9])(?:[A-Z]\\?:|[A-Z]%3A|/mnt/[a-z]|/cygdrive/[a-z]|/[a-z](?=/[U]sers/))(?:\\{1,4}|/)Users(?:\\{1,4}|/)(?P<value>[^\\/\s"'<>|:*?]{0,63}[^\\/\s"'<>|:*?.,;!)\]])'''
+regex = '''(?i)(?<![A-Za-z0-9])(?:(?:[A-Z]\\?:|[A-Z]%3A|/mnt/[a-z]|/cygdrive/[a-z])(?:\\{1,4}|/)Users|(?-i:/[A-Za-z]/Users))(?:\\{1,4}|/)(?P<value>[^\\/\s"'<>|:*?]{0,63}[^\\/\s"'<>|:*?.,;!)\]])'''
 ignore = [
   '(?i)^(?:public|default|all|defaultapppool|administrator|runneradmin|user|username|yourname|your-name|your_name|you|me|name)$',
   '^[$%~{(.\[]',
@@ -370,7 +376,7 @@ ignore_before = [
   '''@[A-Za-z_][\w.]*\.(?:route|get|post|put|patch|delete)\s*\(\s*["']$''',
   '''(?<![\w.])(?:re_)?path\s*\(\s*r?["']$''',
   '''(?:^\s*-\s*|[{,]\s*)path\s*:\s*["'`]?$''',
-  '''^\s*(?:href|to|src|action)=\{?["'`]$''',
+  '''(?:^|\s)(?:href|to|src|action)=\{?["'`]$''',
   '(?i)^\s*WORKDIR\s+["\[]?$',
 ]
 
@@ -392,7 +398,7 @@ ignore_before = [
   '''@[A-Za-z_][\w.]*\.(?:route|get|post|put|patch|delete)\s*\(\s*["']$''',
   '''(?<![\w.])(?:re_)?path\s*\(\s*r?["']$''',
   '''(?:^\s*-\s*|[{,]\s*)path\s*:\s*["'`]?$''',
-  '''^\s*(?:href|to|src|action)=\{?["'`]$''',
+  '''(?:^|\s)(?:href|to|src|action)=\{?["'`]$''',
 ]
 
 [[rules]]

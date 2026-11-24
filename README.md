@@ -28,10 +28,11 @@ and push), and once more on GitHub.
   Hugging Face, npm, PyPI, Telegram and Discord tokens; Slack and Discord webhook URLs;
   `sk-` style API keys (OpenAI, Anthropic and others); JSON Web Tokens; passwords inside
   URLs; npm registry credentials in `.npmrc`; values assigned to names such as `password`,
-  `secret`, `token` or `api_key`, whether quoted in code (including escaped quotes in JSON
-  and notebooks, backticks, and Python `b"..."` and `r"..."` strings), in `.env` and
-  Compose `NAME=value` form, in Dockerfile `ENV` and `ARG` lines, in XML elements such as
-  `<password>`, or unquoted in YAML, `.properties`, INI and TOML files.
+  `secret`, `token` or `api_key`, whether quoted in code (including typed assignments such as
+  `: str =` or `: string =`, escaped quotes in JSON and notebooks, backticks, and Python
+  `b"..."` and `r"..."` strings), in `.env` and Compose `NAME=value` form, in Dockerfile
+  `ENV` and `ARG` lines, in XML elements such as `<password>`, or unquoted in YAML,
+  `.properties`, INI and TOML files.
 - **Files that shouldn't be committed** (always block): `.env` files (but not
   `.env.example`), private keys and keystores (`id_rsa`, `*.pem`, `*.key`, `*.p12` and
   similar), certificates, Terraform state and variables (`*.tfvars`), app signing
@@ -136,13 +137,13 @@ Without `--force`, the installer won't replace a different `core.hooksPath`, won
 one set in your global, system or included git config, won't switch off hooks you already
 have in `.git/hooks` (setting `core.hooksPath` makes git ignore that folder), and won't
 overwrite a hook file that has changed since it was installed. Even with `--force`, it
-never writes through a symbolic link or a Windows junction, whether that is the file itself
-or a folder on the way to it (`.githooks`, `.github`, `.github/workflows`), and it refuses a
-`core.hooksPath` set in a worktree's own config or in `GIT_CONFIG_*` environment variables,
-because those override the repository's setting. Afterwards it checks that git really uses
-`.githooks`. To update the guard later, run the installer again: copies it installed
-unchanged are updated, and your config is kept. New default rules then have to be copied
-into your config by hand.
+never writes through a symbolic link, a Windows junction or a hard link, whether that is the
+file itself or a folder on the way to it (`.githooks`, `.github`, `.github/workflows`), and
+writes each file atomically via a temporary file. It also refuses a `core.hooksPath` set in
+a worktree's own config or in `GIT_CONFIG_*` environment variables, because those override
+the repository's setting. Afterwards it checks that git really uses `.githooks`. To update
+the guard later, run the installer again: copies it installed unchanged are updated, and
+your config is kept. New default rules then have to be copied into your config by hand.
 
 ### Other hook managers
 
@@ -175,7 +176,7 @@ Common changes:
   separated by commas (no spaces). A bare `privacy-guard:allow` hides every personal rule on
   the line. Markers never hide secrets and have no effect in commit or tag messages. A
   marker written any other way (spaces, capitals, quotes, an unknown rule id) does nothing,
-  and the guard prints a warning saying so.
+  and when a finding remains on the line the guard prints a warning saying so.
 - **A secret-shaped value that isn't a secret, or any value that's fine everywhere:** add a
   pattern to `[allowlist] values`, where it is visible in review. It is matched against the
   value found (the username in a path, the password in a URL, the digits of a phone
@@ -199,9 +200,9 @@ Common changes:
   severity = "warn"
   ```
 
-Rules can also use `ignore_before` (skip a match when the text just before it matches) and
-`paths` (only apply to some files); the config's comments explain each key. Secret rules
-always block.
+Rules can also use `ignore_before` (skip a match when the text just before it matches),
+`paths` (only apply to some files) and `ignore_paths` (skip matching files); the config's
+comments explain each key. Secret rules always block.
 
 Check your edits with `python .githooks/privacy_guard.py check-config`. Unknown keys, broken
 patterns, patterns that would match everything and allowlist entries that would match almost
@@ -241,11 +242,13 @@ Copy one to `.github/workflows/visibility-guard.yml`, or use `install.py --workf
   (phone numbers, postcodes, IP addresses) are listed but don't. To fail on those too, run
   the workflow by hand from the Actions tab with "strict" ticked, or run `history --strict`
   locally (Gate 3 of the [checklist](CHECKLIST.md)). For pull requests it uses the scanner
-  and rules from the base branch, so editing them in a pull request doesn't change that
-  pull request's result. If the pull request's own config doesn't load with the base
-  branch's scanner, the run fails, unless the pull request also changes `privacy_guard.py`
-  (an upgrade), when it only warns. It checks that the runner has Python 3.11 or newer
-  first. This repository uses it on itself.
+  and rules from the base branch (`refs/remotes/origin/<base>`), so editing them in a pull
+  request doesn't change that pull request's result, and emits a warning annotation whenever
+  files under `.githooks/` change. If the pull request's own config doesn't load with the
+  base branch's scanner, the run fails, unless the pull request also changes
+  `privacy_guard.py` (an upgrade) and the config loads with the pull request's own scanner,
+  when it only warns. It checks that the runner has Python 3.11 or newer first. This
+  repository uses it on itself.
 
 ## Limits
 
@@ -313,10 +316,15 @@ Please read these before relying on the kit.
   scans it), and `--cleanup=strip` with `-m` can report a `#` line that git then removes.
 - **Names that only describe a secret aren't treated as secrets.** Values assigned to names
   ending in `name`, `ref`, `id`, `type`, `file`, `path`, `url`, `endpoint`, `header`,
-  `issuer`, `audience`, `region`, `encoding`, `regex`, `scope`, `hash`, `version` and similar
-  are skipped, and so are lower-case kebab-case values in config files that look like
-  resource names (`my-tls-secret`), so `secretName: tls-cert` passes, but so does a real value in a field
-  called `secret_id`.
+  `lifespan`, `issuer`, `audience`, `region`, `encoding`, `regex`, `scope`, `hash`,
+  `version`, `existingSecret`, `tlsSecret`, `pullSecret`, `secretKey` or `passwordKey` (and
+  similar) are skipped, and so are lower-case kebab-case values in config files that contain
+  a word such as `secret`, `password`, `token`, `cred` or `key` (`my-tls-secret`), so
+  `secretName: tls-cert` and `existingSecret: postgres-prod-v1` pass, while a real value in
+  a field called `secret_id` also passes. The generic assignment rules (`secret-assignment`
+  and `config-secret`) also skip dependency manifests and lockfiles (`package.json`,
+  `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `pyproject.toml`, `poetry.lock`,
+  `uv.lock`, `Cargo.toml` and `Cargo.lock`); prefix-based token and URL rules still scan them.
 - **Only added lines are scanned.** Details already in a file aren't reported until that line
   changes, and `git commit --amend` doesn't rescan lines already in the commit being amended
   (pre-push still sees the whole commit). A file moved with `git mv` is treated as deleted and
@@ -331,13 +339,14 @@ Please read these before relying on the kit.
   ask, so merging an already-published branch into it scans that branch's commits again.
   Old findings you accept can go in `[allowlist] commits`.
 - **Pushes also check what the pushed trees contain**, not just what each commit changes.
-  For every pushed branch or tag that brings new commits, each file name in its tree is
-  checked, and so is every line that differs from the remote's current tips (and, for a
-  force push, from the tip being replaced). So a file such as `.env`, a deleted secret
-  brought back by a merge (`git merge -s ours`, say) or a force push back to a commit that
-  still had a secret is caught. A push that brings no new commits isn't scanned, because
-  the remote already has everything in it: a new branch or tag at an old commit (one from
-  before a secret was deleted, say) goes through, and the history scan is what finds it.
+  For every pushed branch or tag that brings new commits, each file name in its tree that
+  isn't already on the remote's base is checked, and so is every line that differs from the
+  independent remote boundary commits (and, for a force push, from the tip being replaced).
+  So a file such as `.env`, a deleted secret brought back by a merge (`git merge -s ours`,
+  say) or a force push back to a commit that still had a secret is caught. A push that
+  brings no new commits isn't scanned, because the remote already has everything in it: a
+  new branch or tag at an old commit (one from before a secret was deleted, say) goes
+  through, and the history scan is what finds it.
   A file that matches a file-name rule on purpose (a public certificate, say) needs an
   `ignore` entry on that rule.
 - **Which config the hooks use.** pre-commit and commit-msg use the staged copy (or the one
@@ -371,9 +380,8 @@ Please read these before relying on the kit.
   the contributor's own email address, or a `Co-authored-by:` line with an address in a
   commit message. Allowlist the address, or set `check_commit_emails = false`, if you
   accept contributions.
-- **Tested on:** Windows 11 with Git for Windows and Python 3.11, 3.12 and 3.13. The CI
-  workflow is set up to run the tests on Linux (Python 3.11 to 3.14), macOS and Windows, but
-  hasn't run yet. The two GitHub Action modes haven't run on GitHub yet either.
+- **Tested on:** Windows 11 with Git for Windows, and in CI on Linux (Python 3.11 to 3.14),
+  macOS and Windows.
 
 ## Privacy and network use
 

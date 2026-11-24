@@ -52,7 +52,7 @@ CATEGORIES = ("secret", "personal")
 SEVERITIES = ("block", "warn")
 NORMALISE = ("", "digits")
 MAX_REPORTED = 50
-BEFORE_WINDOW = 64        # characters before a match that `ignore_before` patterns see
+BEFORE_WINDOW = 256       # characters before a match that `ignore_before` patterns see
 BINARY_SNIFF = 8000       # like git: a NUL byte in the first 8000 bytes means binary
 DISCORD_EPOCH_MS = 1_420_070_400_000
 _GLOBAL_UNICAST_V6 = ipaddress.IPv6Network((0x2000 << 112, 3))  # addresses starting 001...
@@ -170,6 +170,7 @@ class Rule:
     severity: str = "block"
     ignore_before: tuple[re.Pattern[str], ...] = ()
     paths: tuple[re.Pattern[str], ...] = ()
+    ignore_paths: tuple[re.Pattern[str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -204,7 +205,12 @@ _COMMIT_ID_RE = re.compile(r"[0-9a-f]{7,64}")
 _PROBES = ("qzx", "XJV", "849", "k-9", "vq/zz.y", "a.b", "Ww_3", "j k", "src/app.py",
            "docs/notes.md", ".env", "x12", "2026-1", "Zq8xW2mN4vB6cX1kL9pR3tY7uH5jG0fD",
            "src/components/forms/x.tsx", "q" "@w.ee", "zz" "@x.io", "lo" "@mn.op",
-           "someone" "@longdomain.example", "ab" "@mailhost.test")  # split: not email-shaped
+           "someone" "@longdomain.example", "ab" "@mailhost.test",
+           "Kp7mQ2vX9nL4rT8wY1zB6cF3hJ5gD0sAeR7uV2pN8mK4",
+           "Wm9xR4tY7uI2oP5aS8dF1gH3jK6lZ0xC9vB2nM4qW7eR5tY8uI1oP3aS6dF9gH2jK4lM",
+           "Ht8nV3bM6qW9eR2tY5uI8oP1aS4dF7gH0jK3lZ6xC9vB2nM5qW8eR1tY4uI7oP0aS3dF6gH9jK2lZ5xC8vB1nM4qW7eR0tY3uI6oP9aS2dF5",
+           "services/billing-ledger/internal/adapters/persistence/migrations/archive/v2026/schema_verify_01.sql",
+           "automated-billing-reconciliation-sender-2026" "@alerts.regional-processing-cluster.organisation.uk")  # split: not email-shaped
 
 
 def load_config(path: Path | str) -> Config:
@@ -287,7 +293,7 @@ def _list_of_tables(data: dict, key: str) -> list:
 
 
 RULE_KEYS = {"id", "category", "description", "regex", "ignore", "check", "examples",
-             "normalise", "severity", "ignore_before", "paths"}
+             "normalise", "severity", "ignore_before", "paths", "ignore_paths"}
 
 
 def parse_config(data: dict) -> Config:
@@ -354,7 +360,8 @@ def parse_config(data: dict) -> Config:
             _patterns(table, "ignore", where), check,
             _patterns(table, "examples", where), normalise, severity,
             _patterns(table, "ignore_before", where),
-            _patterns(table, "paths", where, allowlist=False)))
+            _patterns(table, "paths", where, allowlist=False),
+            _patterns(table, "ignore_paths", where)))
 
     if not rules and not file_rules:
         raise ConfigError("config has no [[rules]] or [[files]], so it would check nothing")
@@ -421,21 +428,28 @@ def find_rules(line: str, cfg: Config, path: str | None = None, *, markers: bool
     secret rule: secrets can only be allowed in the config. With markers=False (commit and
     tag messages) markers are ignored.
     """
-    return [rule for rule, _ in find_rule_matches(line, cfg, path, markers=markers)]
+    seen: set[str] = set()
+    out: list[Rule] = []
+    for rule, _ in find_rule_matches(line, cfg, path, markers=markers):
+        if rule.id not in seen:
+            seen.add(rule.id)
+            out.append(rule)
+    return out
 
 
 def find_rule_matches(line: str, cfg: Config, path: str | None = None, *,
                       markers: bool = True) -> list[tuple[Rule, str]]:
-    """Like find_rules, with the value each rule found (kept in memory, never printed)."""
+    """Every (rule, value) match on one line (values are kept in memory, never printed)."""
     marks = inline_markers(line, cfg) if markers else Markers()
     found = []
     for rule in cfg.rules:
         if rule.paths and (path is None or not any(p.search(path) for p in rule.paths)):
             continue
+        if path is not None and rule.ignore_paths and any(p.search(path) for p in rule.ignore_paths):
+            continue
         if rule.category != "secret" and (marks.bare or rule.id in marks.named):
             continue
-        value = _match_value(rule, line, cfg)
-        if value is not None:
+        for value in _match_values(rule, line, cfg):
             found.append((rule, value))
     return found
 
@@ -459,9 +473,10 @@ def marker_problems(line: str, cfg: Config, found: list[Rule]) -> list[str]:
     return problems
 
 
-def _match_value(rule: Rule, line: str, cfg: Config) -> str | None:
-    """The first value on the line that the rule reports, or None."""
+def _match_values(rule: Rule, line: str, cfg: Config) -> list[str]:
+    """Every value on the line that the rule reports."""
     has_value = "value" in rule.regex.groupindex
+    values: list[str] = []
     for match in rule.regex.finditer(line):
         if rule.ignore_before:
             before = line[max(0, match.start() - BEFORE_WINDOW):match.start()]
@@ -478,8 +493,8 @@ def _match_value(rule: Rule, line: str, cfg: Config) -> str | None:
             continue
         if rule.check and not CHECKS[rule.check](value, cfg.report_examples):
             continue
-        return value
-    return None
+        values.append(value)
+    return values
 
 
 def fingerprint(value: str) -> str:
@@ -555,10 +570,12 @@ class BlobSniffer:
         self.proc.stdin.write(f"{blob}\n".encode())
         self.proc.stdin.flush()
         header = self.proc.stdout.readline().decode("ascii", "replace").split()
-        if len(header) != 3 or header[1] != "blob":
-            return False  # missing (a submodule commit) or not a file
+        if len(header) != 3:
+            return False  # "<oid> missing" (a submodule commit we don't have) or similar
         size = int(header[2])
-        data = self.proc.stdout.read(size + 1)  # the content and a newline
+        data = self.proc.stdout.read(size + 1)  # every object is followed by its content and LF
+        if header[1] != "blob":
+            return False
         return b"\x00" in data[:min(size, BINARY_SNIFF)]
 
     def close(self) -> None:
@@ -566,6 +583,8 @@ class BlobSniffer:
             if self.proc.stdin:
                 self.proc.stdin.close()
             self.proc.wait()
+            if self.proc.stdout:
+                self.proc.stdout.close()
             self.proc = None
 
     def __enter__(self) -> "BlobSniffer":
@@ -902,7 +921,9 @@ def _marker_finding(where: str, problem: str, commit: str = "") -> Finding:
     return Finding(where, "inline-marker", "marker", problem, commit, "warn")
 
 
-def scan_events(events: Iterable[FileEvent | LineEvent], cfg: Config) -> list[Finding]:
+def scan_events(events: Iterable[FileEvent | LineEvent], cfg: Config, *,
+                suppressed: set[tuple[str, str, str]] = frozenset(),
+                all_values: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     skipped: dict[str, bool] = {}
     for event in events:
@@ -924,7 +945,9 @@ def scan_events(events: Iterable[FileEvent | LineEvent], cfg: Config) -> list[Fi
         for piece in event.text.split("\r"):
             matches = find_rule_matches(piece, cfg, event.path)
             for rule, value in matches:
-                if rule.id not in seen:
+                if suppressed and (event.path, rule.id, fingerprint(value)) in suppressed:
+                    continue
+                if all_values or rule.id not in seen:
                     seen.add(rule.id)
                     findings.append(_line_finding(where, rule, cfg, short, value))
             for problem in marker_problems(piece, cfg, [rule for rule, _ in matches]):
@@ -938,8 +961,11 @@ def scan_message(message: str, cfg: Config, label: str, commit: str = "") -> lis
         message = message[1:]
     findings = []
     for number, text in enumerate(message.splitlines(), 1):
+        seen: set[str] = set()
         for rule, value in find_rule_matches(text, cfg, markers=False):
-            findings.append(_line_finding(f"{label} line {number}", rule, cfg, commit, value))
+            if rule.id not in seen:
+                seen.add(rule.id)
+                findings.append(_line_finding(f"{label} line {number}", rule, cfg, commit, value))
     return findings
 
 
@@ -1012,12 +1038,23 @@ def _guess_comment(lines: list[str]) -> str:
     return "#"
 
 
+_DIFF_PREFIX_PAIRS = (("a/", "b/"), ("c/", "i/"), ("i/", "w/"), ("o/", "w/"), ("o/", "i/"), ("1/", "2/"))
+_VERBOSE_HEADER_RE = re.compile(
+    r"(?:old mode |new mode |deleted file mode |new file mode |copy from |copy to |"
+    r"rename from |rename to |similarity index [0-9]+%$|dissimilarity index [0-9]+%$|"
+    r"index [0-9a-f]+(?:,[0-9a-f]+)*\.\.[0-9a-f]+|--- |\+\+\+ |Binary files .* differ$)"
+)
+
+
 def _changed_paths(top: Path) -> set[str]:
-    """Files a `commit -v` diff can show: staged changes (also against HEAD^, for --amend)
-    and, for `-v -v`, changes not staged yet."""
+    """Files a `commit -v` diff can show: staged changes (also against HEAD^, for --amend,
+    or in HEAD itself when amending the root commit) and, for `-v -v`, unstaged changes."""
     paths: set[str] = set()
+    has_parent = _git_ok(top, ["rev-parse", "--verify", "--quiet", "HEAD^"])
+    parent_args = (["diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD^"] if has_parent
+                   else ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"])
     for args in (["diff", "--cached", "--name-only", "-z", "--no-renames"],
-                 ["diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD^"],
+                 parent_args,
                  ["diff", "--name-only", "-z", "--no-renames"]):
         proc = subprocess.run([*GIT, *args], cwd=top, capture_output=True)
         if proc.returncode == 0:
@@ -1025,19 +1062,70 @@ def _changed_paths(top: Path) -> set[str]:
     return paths
 
 
-def _is_verbose_diff(lines: list[str], top: Path | None) -> bool:
-    """Whether the text below a cut line is git's own `commit -v` diff: there is a diff,
-    and every file it names is one git would show (when that can be checked)."""
-    paths = []
+def _verbose_diff_path(line: str, changed: set[str] | None) -> str | None:
+    """Read the destination path from a `diff --git` header in `commit -v` output,
+    supporting standard (a/, b/), mnemonic (c/, i/, w/, o/) and noprefix headers."""
+    rest = line[len("diff --git "):]
+    if rest.startswith('"'):
+        try:
+            first, tail = _take_quoted(rest)
+            tail = tail.lstrip(" ")
+            second = _take_quoted(tail)[0] if tail.startswith('"') else tail
+        except GitError:
+            return None
+        if any(first.startswith(p1) and second.startswith(p2) for p1, p2 in _DIFF_PREFIX_PAIRS):
+            return second[2:]
+        return second
+    for p1, p2 in _DIFF_PREFIX_PAIRS:
+        half = (len(rest) - 5) // 2
+        if half > 0 and rest.startswith(p1) and rest[2 + half:5 + half] == f" {p2}":
+            if rest[2:2 + half] == rest[5 + half:]:
+                return rest[5 + half:]
+    mid = len(rest) // 2
+    if len(rest) >= 3 and len(rest) % 2 == 1 and rest[mid] == " " and rest[:mid] == rest[mid + 1:]:
+        return rest[mid + 1:]
+    for p1, p2 in _DIFF_PREFIX_PAIRS:
+        if rest.startswith(p1) and f" {p2}" in rest:
+            return rest.split(f" {p2}", 1)[1]
+    if changed is not None and " " in rest:
+        for i, ch in enumerate(rest):
+            if ch == " " and rest[:i] in changed and rest[i + 1:] in changed:
+                return rest[i + 1:]
+    return None
+
+
+def _is_verbose_diff(lines: list[str], top: Path | None, comment: str = "#") -> bool:
+    """Whether the text below a cut line is git's own `commit -v` diff: every non-empty
+    line is valid diff content (`diff --git`, header lines, `@@`, and `+`, `-`, space and
+    `\\` lines), and every file it names is one git would show (when that can be checked)."""
+    changed = _changed_paths(top) if top is not None else None
+    paths: list[str] = []
+    in_diff = False
+    has_body = False
     for line in lines:
         if line.startswith("diff --git "):
-            try:
-                paths.append(_section_path(line))
-            except GitError:
+            if in_diff and not has_body:
                 return False
-    if not paths:
+            parsed = _verbose_diff_path(line, changed)
+            if parsed is None:
+                return False
+            paths.append(parsed)
+            in_diff, has_body = True, False
+        elif not line:
+            continue
+        elif (comment and line.startswith(comment)) or line in (
+                "-" * 50, "Changes to be committed:", "Changes not staged for commit:"):
+            if in_diff and not has_body:
+                return False
+            in_diff = False
+        elif in_diff and (_HUNK_RE.match(line) or _VERBOSE_HEADER_RE.match(line)
+                          or line[0] in "+- " or line.startswith("\\ ")):
+            has_body = True
+        else:
+            return False
+    if in_diff and not has_body:
         return False
-    return top is None or set(paths) <= _changed_paths(top)
+    return bool(paths) and (changed is None or set(paths) <= changed)
 
 
 def scan_message_file(path: Path, cfg: Config, editor: bool = False, top: Path | None = None,
@@ -1069,7 +1157,7 @@ def scan_message_file(path: Path, cfg: Config, editor: bool = False, top: Path |
     for index, line in enumerate(lines):
         if line == cut_line and all(later.startswith(comment) for later in lines[index + 1:index + 3]) \
                 and len(lines) >= index + 3:
-            if (mode == "scissors" and context.editor) or _is_verbose_diff(lines[index + 3:], top):
+            if (mode == "scissors" and context.editor) or _is_verbose_diff(lines[index + 3:], top, comment):
                 lines = lines[:index]
             break
     if mode == "strip":
@@ -1183,7 +1271,7 @@ def history_refs(top: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]
 
 
 def scan_revisions(top: Path, cfg: Config, revs: list[str], *, via_stdin: bool = False,
-                   no_walk: bool = False) -> list[Finding]:
+                   no_walk: bool = False, all_values: bool = False) -> list[Finding]:
     """Scan each commit in revs on its own: emails, message and added lines. With
     via_stdin the revisions go to git on standard input, however many there are."""
     if not revs:
@@ -1207,7 +1295,7 @@ def scan_revisions(top: Path, cfg: Config, revs: list[str], *, via_stdin: bool =
     with BlobSniffer(top) as sniff:
         log = git_lines(top, ["log", "--cc", "--no-show-signature", *DIFF_OPTIONS, *extra,
                               "--format=%x00commit %H", *args, "--"], stdin)
-        return findings + scan_events(parse_diff(log, sniff), cfg)
+        return findings + scan_events(parse_diff(log, sniff), cfg, all_values=all_values)
 
 
 def _where_key(finding: Finding) -> tuple[str, str]:
@@ -1222,12 +1310,29 @@ def accepted_keys(top: Path, cfg: Config) -> set[tuple[str, str, str]]:
     if not present:
         return set()
     plain = dataclasses.replace(cfg, accepted_commits=())
-    found = scan_revisions(top, plain, present, via_stdin=True, no_walk=True)
+    found = scan_revisions(top, plain, present, via_stdin=True, no_walk=True, all_values=True)
     return {(*_where_key(f), f.fingerprint) for f in found}
 
 
 def _is_ancestor(top: Path, older: str, newer: str) -> bool:
     return _git_ok(top, ["merge-base", "--is-ancestor", older, newer])
+
+
+def _independent_commits(top: Path, shas: list[str]) -> list[str]:
+    """Drop commits in `shas` that are ancestors of another commit in `shas`."""
+    shas = _unique(shas)
+    if len(shas) <= 1:
+        return shas
+    batch = 200
+    while len(shas) > batch:
+        reduced = []
+        for i in range(0, len(shas), batch):
+            chunk = shas[i:i + batch]
+            reduced.extend(git(top, ["merge-base", "--independent", *chunk]).decode("ascii", "replace").split())
+        if len(reduced) == len(shas):
+            return reduced
+        shas = _unique(reduced)
+    return git(top, ["merge-base", "--independent", *shas]).decode("ascii", "replace").split()
 
 
 def scan_pushed_trees(top: Path, cfg: Config, plan: PushPlan, already: list[Finding],
@@ -1236,9 +1341,10 @@ def scan_pushed_trees(top: Path, cfg: Config, plan: PushPlan, already: list[Find
 
     A merge such as `git merge -s ours`, or a force-push back to an older commit, can bring
     back a file or a line that was deleted, without any commit adding it again. For each
-    pushed tip, the bases are the commits where its new history meets what the remote
-    already has (git rev-list --boundary), plus the remote's old tip when a force-push
-    moves the branch to something that doesn't contain it. Then:
+    pushed tip, the bases are the independent commits where its new history meets what the
+    remote already has (git rev-list --boundary, pruned with merge-base --independent), plus
+    the remote's old tip when a force-push moves the branch to something that doesn't contain
+    it. Then:
     - file-name rules run over every file in the pushed tree that isn't in a base;
     - content rules run over the difference between each base and the pushed tip.
     A tip the remote already has in full, pushed without a force, brings nothing new.
@@ -1261,6 +1367,7 @@ def scan_pushed_trees(top: Path, cfg: Config, plan: PushPlan, already: list[Find
                       "".join(f"{rev}\n" for rev in [tip, *(f"^{k}" for k in plan.known)]))
             for line in out.decode("ascii", "replace").split():
                 (boundary if line.startswith("-") else new).append(line.lstrip("-"))
+            boundary = _independent_commits(top, boundary)
         rolled_back = [old for pushed, old in plan.updates
                        if pushed == tip and old and old != tip and not _is_ancestor(top, old, tip)]
         if plan.known and not new and not rolled_back:
@@ -1275,7 +1382,7 @@ def scan_pushed_trees(top: Path, cfg: Config, plan: PushPlan, already: list[Find
         for base in bases:
             with BlobSniffer(top) as sniff:
                 diff = git_lines(top, ["diff", *DIFF_OPTIONS, base, tip, "--"])
-                for finding in scan_events(parse_diff(diff, sniff), cfg):
+                for finding in scan_events(parse_diff(diff, sniff), cfg, suppressed=suppressed):
                     if finding.rule_id != "inline-marker":
                         add(dataclasses.replace(finding, where=f"{finding.where} (in the pushed files)",
                                                 commit=tip[:12]))
@@ -1374,10 +1481,19 @@ def _advice(action: str, cfg: Config, config_name: str) -> list[str]:
     ]
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_CONTROL_MAP = {9: r"\t", 10: r"\n", 13: r"\r"}
+
+
+def _safe_text(text: str) -> str:
+    """Escape control characters so file or ref names can't inject log commands or ANSI codes."""
+    return _CONTROL_RE.sub(lambda m: _CONTROL_MAP.get(ord(m.group()), f"\\x{ord(m.group()):02x}"), text)
+
+
 def _listing(findings: list[Finding], limit: int) -> list[str]:
     lines = []
     for finding in findings[:limit]:
-        where = f"{finding.commit} {finding.where}" if finding.commit else finding.where
+        where = _safe_text(f"{finding.commit} {finding.where}" if finding.commit else finding.where)
         lines.append(f"  {where}")
         lines.append(f"      {finding.category}: {finding.description} [{finding.rule_id}]")
     if len(findings) > limit:

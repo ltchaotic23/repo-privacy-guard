@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 if sys.version_info < (3, 11):
@@ -149,8 +150,8 @@ def is_link(path: Path) -> bool:
 
 
 def refuse_links(repo: Path, paths: list[Path]) -> None:
-    """Writing through a symbolic link or junction, in the file's name or in any folder on
-    the way to it, would change a file somewhere else."""
+    """Writing through a symbolic link, junction or hard link, in the file's name or in
+    any folder on the way to it, would change a file somewhere else."""
     for path in paths:
         parts = path.relative_to(repo).parts
         for depth in range(1, len(parts) + 1):
@@ -160,8 +161,25 @@ def refuse_links(repo: Path, paths: list[Path]) -> None:
                 raise InstallError(f"{'/'.join(parts[:depth])} is a symbolic link or junction; replace "
                                    f"it with a real {kind} first (the installer never writes "
                                    "through links)")
+            if step.exists() and not step.is_dir() and step.stat().st_nlink > 1:
+                raise InstallError(f"{'/'.join(parts[:depth])} is a hard link; replace it with a "
+                                   "standalone file first (the installer never writes through links)")
         if path.exists() and not path.resolve().is_relative_to(repo):
             raise InstallError(f"{'/'.join(parts)} leads outside the repository")
+
+
+def _atomic_write_bytes(dst: Path, data: bytes) -> None:
+    """Write via a temporary file in the same folder and replace dst atomically."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".privacy-guard-", dir=dst.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, dst)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def refuse_wrong_types(paths: list[Path], folders: list[Path], repo: Path) -> None:
@@ -257,17 +275,15 @@ def install(target: Path, workflow: str | None, force: bool) -> list[str]:
     notes: list[str] = []
     try:
         for src, dst, note in plan:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
+            _atomic_write_bytes(dst, src.read_bytes())
             notes.append(note)
         if unchanged_workflow:
             notes.append(".github/workflows/visibility-guard.yml is already up to date")
         if copying:
             if config.exists() and not any(dst == config for _, dst, _ in plan):
                 notes.append(f"Kept your existing {HOOK_DIR}/{CONFIG}")
-            (dest / MANIFEST).write_text(
-                "".join(f"{sha256(dest / name)}  {name}\n" for name in SCRIPTS),
-                encoding="utf-8", newline="\n")
+            manifest_bytes = "".join(f"{sha256(dest / name)}  {name}\n" for name in SCRIPTS).encode("utf-8")
+            _atomic_write_bytes(dest / MANIFEST, manifest_bytes)
         for name in HOOKS:
             make_executable(dest / name)
     except OSError as exc:

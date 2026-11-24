@@ -66,6 +66,25 @@ CORPUS: list[tuple[str, str]] = [
     ("src/buffers.py", 'BUFFER_SIZES = "256 512 1024"'),
     ("src/bits.py", "LIMIT = 1152921504606846976  # 2**60"),
     ("src/ids.py", "SAMPLE = 123456789012345678"),
+    # Kubernetes/Helm secret reference keys, manifests/lockfiles, Compose defaults, wide JSX and REST routes
+    ("k8s/postgres-values.yaml", "  existingSecret: postgres-prod-v1"),
+    ("k8s/ingress-values.yaml", "  tlsSecret: wildcard-prod-2026"),
+    ("k8s/service-account.yaml", "  pullSecret: ghcr-registry-1"),
+    ("k8s/external-secret.yaml", "  secretKey: database-url-v1"),
+    ("k8s/bitnami-values.yaml", "  passwordKey: postgres-admin-v1"),
+    ("package.json", '    "express-bearer-tok' 'en": "^2.4.0-beta.1",'),
+    ("pnpm-lock.yaml", "  '@types/express-bearer-tok" "en': 2.4.0(express@4.19.2)"),
+    ("pyproject.toml", 'django-rest-pass' 'wordreset = "^1.4.0rc1"'),
+    ("Cargo.toml", 'oauth2-tok' 'en = "0.4.1-alpha.2"'),
+    ("src/main/resources/application.yml", "  token-lifespan: PT15M30S"),
+    ("docker-compose.yml", '      BROKER_URL: "amqp://guest:' 'guest@rabbitmq:5672/"'),
+    ("docker-compose.yml", '      DATABASE_URL: "postgres://postgres:' 'postgres@db:5432/app"'),
+    ("src/Button.tsx", '<button className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm ' "sk-" 'button-primary-v2-2026">'),
+    ("src/Card.tsx", 'const cls = cn("flex items-center ' "sk-" 'button-primary-v2-2026");'),
+    ("src/Modal.tsx", "className={`" "sk-" "button-primary-v2-2026`}"),
+    ("src/Nav.tsx", '<Link className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium" to="/home/' 'dashboard">'),
+    ("src/api.ts", 'const res = await fetch("/m/users/profile");'),
+    ("src/routes.ts", 'router.get("/i/users/12345", handler);'),
 ]
 
 
@@ -75,7 +94,7 @@ def findings(path: str, line: str, cfg: pg.Config) -> list[pg.Finding]:
 
 class NoiseCorpus(unittest.TestCase):
     def test_corpus_size(self) -> None:
-        self.assertEqual(len(CORPUS), 43)
+        self.assertEqual(len(CORPUS), 61)
 
     def test_no_findings_with_examples_reported(self) -> None:
         for path, line in CORPUS:

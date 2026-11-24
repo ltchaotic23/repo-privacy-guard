@@ -78,8 +78,13 @@ class Workflows(unittest.TestCase):
 
     def test_pull_request_config_is_checked_by_the_base_scanner(self) -> None:
         text = (ROOT / "templates" / "visibility-guard-public.yml").read_text(encoding="utf-8")
+        self.assertIn('base="refs/remotes/origin/$BASE_REF"', text)
+        self.assertNotIn('"origin/$BASE_REF', text)
         self.assertIn('check-config --config .githooks/privacy-guard.toml', text)
-        self.assertIn('git diff --quiet "origin/$BASE_REF"...HEAD -- .githooks/privacy_guard.py', text)
+        self.assertIn('git diff --quiet "$base"...HEAD -- .githooks/privacy_guard.py', text)
+        self.assertIn('python3 .githooks/privacy_guard.py check-config --config .githooks/privacy-guard.toml', text)
+        self.assertIn('git diff --quiet "$base"...HEAD -- .githooks/', text)
+        self.assertIn('::warning::This pull request changes files under .githooks/', text)
 
     def test_readme_has_the_real_clone_url(self) -> None:
         text = (ROOT / "README.md").read_text(encoding="utf-8")
