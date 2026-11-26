@@ -17,10 +17,11 @@ every backup, even after a later commit deletes it.
       numbers, address or postcode, IP addresses or account IDs. Look hardest at sample
       data, test fixtures, screenshots, logs and generated reports, because that's where
       real data slips in. Use values reserved for examples instead: `example.com`
-      addresses, the documentation IP ranges `192.0.2.0/24` and `2001:db8::/32`, Ofcom's
-      drama phone numbers (`07700 900000` to `07700 900999`), the placeholder postcode
-      `ZZ99 9ZZ` and plainly made-up names. *(The hook checks the common patterns, not
-      names or screenshots, and lets these reserved values through.)*
+      addresses, the documentation IP ranges `192.0.2.0/24` and `2001:db8::/32`, phone
+      numbers reserved for fiction (North America's `555-0100` to `555-0199`, or the UK's
+      `07700 900000` to `07700 900999`; many countries have their own), the UK placeholder
+      postcode `ZZ99 9ZZ` and plainly made-up names. *(The hook checks the common patterns,
+      not names or screenshots, and lets these reserved values through.)*
 - [ ] `.gitignore` covers environment files (`.env*`), virtual environments, caches, build
       output and local data folders. Check with `git status --ignored`.
 - [ ] The commit email is the one you mean to publish. On GitHub that's usually your

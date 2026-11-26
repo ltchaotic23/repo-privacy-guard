@@ -41,18 +41,23 @@ and push), and once more on GitHub.
 - **Personal details:** home-folder paths with a username (`C:\Users\<name>`, including the
   Git Bash, WSL and file-URL forms, `/home/<name>` and `/Users/<name>`), email addresses, and
   author, committer and tagger emails that aren't a GitHub `noreply` address all **block**.
-  Phone numbers (international, UK and North American formats), public IPv4 and IPv6
-  addresses, UK postcodes and Discord-style IDs (17 to 20-digit "snowflakes") **warn**,
-  because ordinary numbers in code can look like them. Use `--strict`, or set
-  `strict = true` in the config, to make every rule block.
+  Phone numbers, public IPv4 and IPv6 addresses, UK postcodes and Discord-style IDs (17 to
+  20-digit "snowflakes") **warn**, because ordinary numbers in code can look like them. Use
+  `--strict`, or set `strict = true` in the config, to make every rule block.
+- **Where you live matters for phone numbers and postcodes.** Any phone number written with a
+  country code (`+49 …`, `+91 …`, `+61 …`) is found, whatever the country. Numbers written
+  the local way are found only in UK and North American formats, and postcodes only in the
+  UK format. If you're elsewhere, add a rule for your own country's formats: see
+  [Configure](#configure), which has an example. Everything else (secrets, files, home
+  paths, email and IP addresses) works the same everywhere.
 - **Messages:** the text of commit and annotated tag messages, with the same rules.
 
 Values reserved for documentation and tests are ignored by default, so sample data written
 the recommended way doesn't block a commit: `example.com`, `example.net` and `example.org`
 addresses, and addresses at the top-level domains reserved for testing (`.test`,
 `.example`, `.invalid` and `.localhost`); the documentation IP ranges `192.0.2.x`, `198.51.100.x`, `203.0.113.x` and
-`2001:db8::`; Ofcom's drama phone numbers (such as `07700 900xxx`) and North America's
-`555-0100` to `555-0199`; the placeholder postcode `ZZ99 9ZZ`; and the username
+`2001:db8::`; the UK telecoms regulator Ofcom's numbers for drama (such as `07700 900xxx`)
+and North America's `555-0100` to `555-0199`; the placeholder postcode `ZZ99 9ZZ`; and the username
 `exampleuser`. Use `--report-examples`, or set `report_examples = true` in the config, to
 have them reported too, which is a quick way to check that the guard works.
 
@@ -189,6 +194,24 @@ Common changes:
 - **Your own example values:** add them to a rule's `examples` list. Like the built-in ones,
   they're ignored unless `report_examples = true`.
 - **A rule you don't want:** delete it or comment it out.
+- **Your country's phone numbers or postcodes:** the built-in local formats are UK and North
+  American (numbers written with a `+` country code are found anywhere). Add a rule for your
+  own, and reuse the built-in phone checks that cut false alarms. For example, Australian
+  mobile numbers written the local way:
+
+  ```toml
+  [[rules]]
+  id = "phone-australia-mobile"
+  category = "personal"
+  description = "an Australian mobile number"
+  regex = '(?<![\w+])04[0-9]{2}[ ]?[0-9]{3}[ ]?[0-9]{3}(?!\w)'
+  check = "phone"
+  normalise = "digits"
+  severity = "warn"
+  ```
+
+  Add your country's numbers reserved for examples, if it has any, to the rule's `examples`
+  list (as digits only, because of `normalise = "digits"`) so they don't raise alarms.
 - **A new rule:**
 
   ```toml
